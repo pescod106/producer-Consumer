@@ -4,6 +4,13 @@
 
 #pragma once
 #include "afxwin.h"
+#include <list> 
+
+typedef struct ParamInfo{
+	int id;
+	int speed;
+	HWND m_hWnd;
+}ParamInfo;
 
 
 // CproducerAndConsumerDlg 对话框
@@ -19,7 +26,7 @@ public:
 	protected:
 	virtual void DoDataExchange(CDataExchange* pDX);	// DDX/DDV 支持
 
-
+	
 // 实现
 protected:
 	HICON m_hIcon;
@@ -34,6 +41,7 @@ public:
 	// 对应四种情况
 	CComboBox cmbSituation;
 	afx_msg void OnCbnSelchangeCombo1();
+	void initEditToZero();
 	//int BufferCapacity = 0;
 	// 输入日志
 	CListBox m_LogList;
@@ -42,9 +50,28 @@ public:
 	int ConsNum;//消费个数
 	int ProducerNum;//生产者个数
 	int ConsumerNum;//消费者个数
-	// 第四种情况
-	void Situation3();
+	// 第三种情况
+	//void Situation3();
 	afx_msg LRESULT OnResuReceData(WPARAM Wparam,LPARAM Lparam);
+	afx_msg LRESULT showNumberOfP(WPARAM Wparam, LPARAM Lparam);
+	afx_msg LRESULT showNumberOfC(WPARAM Wparam, LPARAM Lparam);
+	afx_msg LRESULT showBuffer1Content(WPARAM Wparam, LPARAM Lparam);
+	afx_msg LRESULT showBuffer2Content(WPARAM Wparam, LPARAM Lparam);
+	afx_msg LRESULT showBuffer3Content(WPARAM Wparam, LPARAM Lparam);
 	afx_msg void OnBnClickedBtnStart();
 	virtual LRESULT WindowProc(UINT message, WPARAM wParam, LPARAM lParam);
+	// 第一种情况
+	//void Situation1();
+	// 第二种情况
+	//void Situation2();
+	// 第四种情况
+	void Situation();
+	void initGlobalVariable();
+//	afx_msg void OnTimer(UINT_PTR nIDEvent);
+	void showBufferContent();
+	CListBox m_buff1List;
+	CListBox m_buff2List;
+	CListBox m_buff3List;
+	afx_msg void OnBnClickedBtnPause();
+	afx_msg void OnTimer(UINT_PTR nIDEvent);
 };
