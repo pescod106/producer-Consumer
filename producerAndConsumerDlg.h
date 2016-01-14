@@ -60,18 +60,15 @@ public:
 	afx_msg LRESULT showBuffer3Content(WPARAM Wparam, LPARAM Lparam);
 	afx_msg void OnBnClickedBtnStart();
 	virtual LRESULT WindowProc(UINT message, WPARAM wParam, LPARAM lParam);
-	// 第一种情况
-	//void Situation1();
-	// 第二种情况
-	//void Situation2();
-	// 第四种情况
+	
 	void Situation();
 	void initGlobalVariable();
-//	afx_msg void OnTimer(UINT_PTR nIDEvent);
 	void showBufferContent();
 	CListBox m_buff1List;
 	CListBox m_buff2List;
 	CListBox m_buff3List;
 	afx_msg void OnBnClickedBtnPause();
 	afx_msg void OnTimer(UINT_PTR nIDEvent);
+	afx_msg void OnBnClickedBtnLib();
+	afx_msg void OnBnClickedBtnSave();
 };

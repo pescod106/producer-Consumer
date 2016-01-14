@@ -6,6 +6,8 @@
 #include "producerAndConsumer.h"
 #include "producerAndConsumerDlg.h"
 #include "afxdialogex.h"
+#include "libraryDlg.h"
+#include <locale.h>
 #include <List>
 #ifdef _DEBUG
 #define new DEBUG_NEW
@@ -27,13 +29,13 @@ class CAboutDlg : public CDialogEx
 public:
 	CAboutDlg();
 
-// 对话框数据
+	// 对话框数据
 	enum { IDD = IDD_ABOUTBOX };
 
-	protected:
+protected:
 	virtual void DoDataExchange(CDataExchange* pDX);    // DDX/DDV 支持
 
-// 实现
+	// 实现
 protected:
 	DECLARE_MESSAGE_MAP()
 };
@@ -56,7 +58,7 @@ END_MESSAGE_MAP()
 
 
 CproducerAndConsumerDlg::CproducerAndConsumerDlg(CWnd* pParent /*=NULL*/)
-	: CDialogEx(CproducerAndConsumerDlg::IDD, pParent)
+: CDialogEx(CproducerAndConsumerDlg::IDD, pParent)
 {
 	m_hIcon = AfxGetApp()->LoadIcon(IDR_MAINFRAME);
 }
@@ -75,9 +77,11 @@ BEGIN_MESSAGE_MAP(CproducerAndConsumerDlg, CDialogEx)
 	//ON_CBN_SELCHANGE(IDC_COMBO1, &CproducerAndConsumerDlg::OnCbnSelchangeCombo1)
 	ON_BN_CLICKED(IDC_BTN_START, &CproducerAndConsumerDlg::OnBnClickedBtnStart)
 
-//	ON_WM_TIMER()
-ON_BN_CLICKED(IDC_BTN_PAUSE, &CproducerAndConsumerDlg::OnBnClickedBtnPause)
-ON_WM_TIMER()
+	//	ON_WM_TIMER()
+	ON_BN_CLICKED(IDC_BTN_PAUSE, &CproducerAndConsumerDlg::OnBnClickedBtnPause)
+	ON_WM_TIMER()
+	ON_BN_CLICKED(IDC_BTN_LIB, &CproducerAndConsumerDlg::OnBnClickedBtnLib)
+	ON_BN_CLICKED(IDC_BTN_SAVE, &CproducerAndConsumerDlg::OnBnClickedBtnSave)
 END_MESSAGE_MAP()
 
 
@@ -182,23 +186,26 @@ HCURSOR CproducerAndConsumerDlg::OnQueryDragIcon()
 	return static_cast<HCURSOR>(m_hIcon);
 }
 
-int haveFinished = 0;//用于记录线程完成的个数
-bool isFinishProduce = false;
-HANDLE FinishedHandle;
+int FinishedMoveNum = 0;//用于记录Move线程完成的个数
+HANDLE FinishedMoveMutex;//Move线程的互斥锁
+int FinishedProduceNum = 0;//生产完成个数
+HANDLE ProduceFinishedMutex;//所有生产者完成个数
+int FinishedConsumerNum = 0;//消费者完成个数
+HANDLE ConsumerFinishedMutex;//所有消费者完成互斥锁
 
- int putNum = 0;//生产数量
- int getNum = 0;//消费数量
- int buffer1_capacity = 0;//Buffer1容量
- int buffer2_capacity = 0;//Buffer2容量
- int buffer3_capacity = 0; //Buffer3容量
- int producer_num = 0;//生产者数目
- int consumer_num = 0;//消费者数目
- int put_speed = 0;//生产速度
- int get_speed = 0;//消费速度
- int move_speed = 0;//移动速度
+int putNum = 0;//生产数量
+int getNum = 0;//消费数量
+int buffer1_capacity = 0;//Buffer1容量
+int buffer2_capacity = 0;//Buffer2容量
+int buffer3_capacity = 0; //Buffer3容量
+int producer_num = 0;//生产者数目
+int consumer_num = 0;//消费者数目
+int put_speed = 0;//生产速度
+int get_speed = 0;//消费速度
+int move_speed = 0;//移动速度
 
 int limit = 30;  //生产总量
-const int maxsize = 10; //缓冲区大小
+//const int maxsize = 10; //缓冲区大小
 int buf1Idx = 0;    //当前缓冲区1下标
 int buf2Idx = 0;    //当前缓冲区2下标
 int buf3Idx = 0;    //当前缓冲区3下标
@@ -207,18 +214,28 @@ int putedNum = 0;
 int getedNum = 0;
 
 int rowCount = -1;
-char buf1[maxsize];//缓冲1区 （字符串）
-char buf2[maxsize];//缓冲2区 （字符串）
-char buf3[maxsize];//缓冲3区 （字符串）
+char* buf1;//缓冲1区 （字符串）
+char* buf2;//缓冲2区 （字符串）
+char* buf3;//缓冲3区 （字符串）
+
+//线程句柄
+CWinThread* Move1Handle;
+CWinThread* Move2Handle;
+CList<CWinThread*> ProducerHandle;
+CList<CWinThread*> ConsumerHandle;
 
 HANDLE buf1Idx_Mutex; //Buffer1下标的互斥锁
+HANDLE buf2Idx_Mutex; //Buffer1下标的互斥锁
+HANDLE buf3Idx_Mutex; //Buffer1下标的互斥锁
 
 HANDLE buf1_Mutex, buf1_Full, buf1_Empty; //Buffer1的互斥锁，占用信号量，空闲信号量
 HANDLE buf2_Mutex, buf2_Full, buf2_Empty; //Buffer2的互斥锁，占用信号量，空闲信号量
 HANDLE buf3_Mutex, buf3_Full, buf3_Empty; //Buffer3的互斥锁，占用信号量，空闲信号量
 HANDLE disp;    //用于控制屏幕打印的互斥锁
 
-int rowNum = -1;
+HANDLE puted_Mutex, geted_Mutex;//已经生产、已经消费数量变量的互斥锁
+
+//int rowNum = -1;
 
 //产生随即字符
 char randomCharcter()
@@ -237,7 +254,7 @@ UINT Producer(LPVOID param)
 	int id = paramInfo->id;
 	HWND hWnd = paramInfo->m_hWnd;
 	CString strResu;
-	CList<char> list;
+	//CList<char> list;
 	int ct;
 	const int pwait = 100;
 	srand(GetTickCount()); //随机数播种
@@ -247,50 +264,69 @@ UINT Producer(LPVOID param)
 	CString currentTime = CTime::GetCurrentTime().Format("%H:%M:%S");
 	strResu.Format(_T("%s  生产者%d开始生产!"), currentTime, id);
 	GetDlgItem(hWnd, IDC_LOG_LIST);
-	
+
 	CString* str = new CString(strResu);
 	::PostMessage(hWnd, UM_RESURECEDATA, (WPARAM)str, (LPARAM)str);
-
+	int iputedNum;
 	ReleaseMutex(disp);
-	while (putedNum < putNum)
+	while (true)
 	{
+		WaitForSingleObject(puted_Mutex, INFINITE);
+		putedNum++;
+		iputedNum = putedNum;
+		WaitForSingleObject(ConsumerFinishedMutex, INFINITE);
+		if ((FinishedConsumerNum == consumer_num) || (putedNum > putNum))
+		{
+			ReleaseMutex(ConsumerFinishedMutex);
+			ReleaseMutex(puted_Mutex);
+			break;
+		}
+		ReleaseMutex(ConsumerFinishedMutex);
+		ReleaseMutex(puted_Mutex);
+
 		char result = randomCharcter();
 
 		WaitForSingleObject(buf1_Empty, INFINITE); //请求一个空缓冲区，阻塞
 		WaitForSingleObject(buf1_Mutex, INFINITE); //请求互斥锁，阻塞
-		buf1[buf1Idx++] = result;
-		putedNum++;
 
+		WaitForSingleObject(buf1Idx_Mutex, INFINITE);
+		buf1[buf1Idx++] = result;
+		ReleaseMutex(buf1Idx_Mutex);
+
+		
 		//发送显示已经生产的数量信息
 		WaitForSingleObject(disp, INFINITE);
-		strResu.Format(_T("%d"), putedNum);
+		strResu.Format(_T("%d"), iputedNum);
 		str = new CString(strResu);
 		::PostMessage(hWnd, UM_PUTEDNUM, (WPARAM)str, (LPARAM)str);
 		ReleaseMutex(disp);
 
 		//发送已经生产的所有产品
 		WaitForSingleObject(disp, INFINITE);
-		strResu=buf1; 
+		strResu = buf1;
+		WaitForSingleObject(buf1Idx_Mutex, INFINITE);
 		strResu.Left(buf1Idx);
+		ReleaseMutex(buf1Idx_Mutex);
 		str = new CString(strResu);
 		::PostMessage(hWnd, UM_BUFFINFO1, (WPARAM)str, (LPARAM)str);
 		ReleaseMutex(disp);
 
 		WaitForSingleObject(disp, INFINITE);
 		currentTime = CTime::GetCurrentTime().Format("%H:%M:%S");
-		strResu.Format(_T("%s  生产者%d将 %s 加入到Buffer1【%d】"), currentTime, id,CString(result), buf1Idx);
+		WaitForSingleObject(buf1Idx_Mutex, INFINITE);
+		strResu.Format(_T("%s  (P->B)生产者%d将 %s 加入到Buffer1[%d]"), currentTime, id, CString(result), buf1Idx);
+		ReleaseMutex(buf1Idx_Mutex);
 		str = new CString(strResu);
-		::PostMessage(hWnd, UM_RESURECEDATA, (WPARAM)str, (LPARAM)str);		
+		::PostMessage(hWnd, UM_RESURECEDATA, (WPARAM)str, (LPARAM)str);
 		ReleaseMutex(disp);
 
 		ReleaseMutex(buf1_Mutex);    //释放互斥锁
 		ReleaseSemaphore(buf1_Full, 1, NULL);   //signal(full)
-		Sleep(rand() % pwait + speed);  //休息一会
+		Sleep(rand() % speed+pwait );  //休息一会
 	}
-	WaitForSingleObject(FinishedHandle, INFINITE);
-	haveFinished++;
-	isFinishProduce = true;
-	ReleaseMutex(FinishedHandle);
+	WaitForSingleObject(ProduceFinishedMutex, INFINITE);
+	FinishedProduceNum++;
+	ReleaseMutex(ProduceFinishedMutex);
 
 	WaitForSingleObject(disp, INFINITE);
 	currentTime = CTime::GetCurrentTime().Format("%H:%M:%S");
@@ -300,12 +336,16 @@ UINT Producer(LPVOID param)
 	ReleaseMutex(disp);
 
 	//发送已经生产的所有产品
+	WaitForSingleObject(buf1_Mutex, INFINITE); //请求互斥锁，阻塞
 	WaitForSingleObject(disp, INFINITE);
 	strResu = buf1;
+	WaitForSingleObject(buf1Idx_Mutex, INFINITE);
 	strResu.Left(buf1Idx);
+	ReleaseMutex(buf1Idx_Mutex);
 	str = new CString(strResu);
 	::PostMessage(hWnd, UM_BUFFINFO1, (WPARAM)str, (LPARAM)str);
 	ReleaseMutex(disp);
+	ReleaseMutex(buf1_Mutex);    //释放互斥锁
 
 	return 0;
 }
@@ -328,42 +368,90 @@ UINT Consumer(LPVOID param)
 	WaitForSingleObject(disp, INFINITE);
 	CproducerAndConsumerDlg* pDlg = (CproducerAndConsumerDlg*)param;
 	CString currentTime = CTime::GetCurrentTime().Format("%H:%M:%S");
-	strResu.Format(_T("%s  消费者%d开始消费!"),currentTime,id);
+	strResu.Format(_T("%s  消费者%d开始消费!"), currentTime, id);
 	CString* str = new CString(strResu);
 	::PostMessage(hWnd, UM_RESURECEDATA, (WPARAM)str, (LPARAM)str);
 	ReleaseMutex(disp);
 	bool isReturn = false;
 	int maxNum;
-	if (getNum<=putNum)
+	if (getNum <= putNum)
 	{
 		maxNum = getNum;
 	}
 	else
 	{
 		maxNum = putNum;
-	}
-	while (getedNum< maxNum)
+	}	
+	while (true)
 	{
-		while (true)
+		WaitForSingleObject(geted_Mutex, INFINITE);
+		if (getedNum < maxNum)
 		{
-			if (WAIT_TIMEOUT == WaitForSingleObject(buf3_Full, 100))
+			while (true)
 			{
-				if (WAIT_TIMEOUT == WaitForSingleObject(buf2_Full, 100))
+				if (WAIT_TIMEOUT == WaitForSingleObject(buf3_Full, 100))
 				{
-					continue;
+					if (WAIT_TIMEOUT == WaitForSingleObject(buf2_Full, 100))
+					{
+						continue;
+					}
+					else
+					{
+						WaitForSingleObject(buf2_Mutex, INFINITE); //请求互斥锁，阻塞
+						WaitForSingleObject(buf2Idx_Mutex, INFINITE);
+						stuff = buf2[--buf2Idx];
+						ReleaseMutex(buf2Idx_Mutex);
+						getedNum++;
+
+						WaitForSingleObject(disp, INFINITE);
+						currentTime = CTime::GetCurrentTime().Format("%H:%M:%S");
+						WaitForSingleObject(buf2Idx_Mutex, INFINITE);
+						strResu.Format(_T("%s  (B2->C)消费者%d从Buffer2[%d]取得 %s"), currentTime, id, (buf2Idx + 1), stuff);
+						ReleaseMutex(buf2Idx_Mutex);
+						str = new CString(strResu);
+						::PostMessage(hWnd, UM_RESURECEDATA, (WPARAM)str, (LPARAM)str);
+						ReleaseMutex(disp);
+
+						WaitForSingleObject(disp, INFINITE);
+						strResu.Format(_T("%d"), getedNum);
+						str = new CString(strResu);
+						::PostMessage(hWnd, UM_GETEDNUM, (WPARAM)str, (LPARAM)str);
+						ReleaseMutex(disp);
+
+						WaitForSingleObject(disp, INFINITE);
+						strResu = buf2;
+						WaitForSingleObject(buf2Idx_Mutex, INFINITE);
+						strResu.Left(buf2Idx);
+						ReleaseMutex(buf2Idx_Mutex);
+						str = new CString(strResu);
+						::PostMessage(hWnd, UM_BUFFINFO2, (WPARAM)str, (LPARAM)str);
+						ReleaseMutex(disp);
+
+						ReleaseMutex(buf2_Mutex);    //释放互斥锁
+						ReleaseSemaphore(buf2_Empty, 1, NULL);   //signal(empty)
+						Sleep(rand() % speed + cwait);  //休息一会
+
+						break;
+					}
 				}
 				else
 				{
-					WaitForSingleObject(buf2_Mutex, INFINITE); //请求互斥锁，阻塞
-					stuff = buf2[--buf2Idx];
+					WaitForSingleObject(buf3_Mutex, INFINITE); //请求互斥锁，阻塞
+					WaitForSingleObject(buf3Idx_Mutex, INFINITE);
+					WaitForSingleObject(buf3Idx_Mutex, INFINITE);
+					stuff = buf3[--buf3Idx];
+					ReleaseMutex(buf3Idx_Mutex);
+					ReleaseMutex(buf3Idx_Mutex);
 					getedNum++;
-					
+
 					WaitForSingleObject(disp, INFINITE);
 					currentTime = CTime::GetCurrentTime().Format("%H:%M:%S");
-					strResu.Format(_T("%s  消费者%d从Buffer2取得 %s 序号为【%d】"), currentTime, id, stuff, (buf2Idx + 1));
+					WaitForSingleObject(buf3Idx_Mutex, INFINITE);
+					strResu.Format(_T("%s  (B3->C)消费者%d从Buffer3[%d]取得 %s"), currentTime, id, (buf3Idx + 1), stuff);
+					ReleaseMutex(buf3Idx_Mutex);
 					str = new CString(strResu);
 					::PostMessage(hWnd, UM_RESURECEDATA, (WPARAM)str, (LPARAM)str);
-					ReleaseMutex(disp);	
+					ReleaseMutex(disp);
 
 					WaitForSingleObject(disp, INFINITE);
 					strResu.Format(_T("%d"), getedNum);
@@ -372,79 +460,102 @@ UINT Consumer(LPVOID param)
 					ReleaseMutex(disp);
 
 					WaitForSingleObject(disp, INFINITE);
-					strResu = buf2;
-					strResu.Left(buf2Idx);
+					strResu = buf3;
+					WaitForSingleObject(buf3Idx_Mutex, INFINITE);
+					strResu.Left(buf3Idx);
+					ReleaseMutex(buf3Idx_Mutex);
 					str = new CString(strResu);
 					::PostMessage(hWnd, UM_BUFFINFO3, (WPARAM)str, (LPARAM)str);
 					ReleaseMutex(disp);
 
-					ReleaseMutex(buf2_Mutex);    //释放互斥锁
-					ReleaseSemaphore(buf2_Empty, 1, NULL);   //signal(empty)
-					Sleep(rand() % speed+cwait);  //休息一会
-					
+					ReleaseMutex(buf3_Mutex);    //释放互斥锁
+					ReleaseSemaphore(buf3_Empty, 1, NULL);   //signal(empty)
+					Sleep(rand() % speed + cwait);  //休息一会
+
 					break;
 				}
 			}
-			else
-			{
-				WaitForSingleObject(buf3_Mutex, INFINITE); //请求互斥锁，阻塞
-				stuff = buf3[--buf3Idx];
-				getedNum++;
-				
-				WaitForSingleObject(disp, INFINITE);
-				currentTime = CTime::GetCurrentTime().Format("%H:%M:%S");
-				strResu.Format(_T("%s  消费者%d从Buffer3取得 %s 序号【%d】"), currentTime, id, stuff, (buf3Idx + 1));
-				str = new CString(strResu);
-				::PostMessage(hWnd, UM_RESURECEDATA, (WPARAM)str, (LPARAM)str);
-				ReleaseMutex(disp);
-
-				WaitForSingleObject(disp, INFINITE);
-				strResu.Format(_T("%d"), getedNum);
-				str = new CString(strResu);
-				::PostMessage(hWnd, UM_GETEDNUM, (WPARAM)str, (LPARAM)str);
-				ReleaseMutex(disp);
-
-				WaitForSingleObject(disp, INFINITE);
-				strResu = buf3;
-				strResu.Left(buf3Idx);
-				str = new CString(strResu);
-				::PostMessage(hWnd, UM_BUFFINFO2, (WPARAM)str, (LPARAM)str);
-				ReleaseMutex(disp);
-
-				ReleaseMutex(buf3_Mutex);    //释放互斥锁
-				ReleaseSemaphore(buf3_Empty, 1, NULL);   //signal(empty)
-				Sleep(rand() % speed+cwait);  //休息一会
-				
-				break;
-			}
 		}
+		else
+		{
+			break;
+		}
+		ReleaseMutex(geted_Mutex);
 	}
+
+	WaitForSingleObject(ConsumerFinishedMutex, INFINITE);
+	FinishedConsumerNum++;
+	ReleaseMutex(ConsumerFinishedMutex);
 
 	WaitForSingleObject(disp, INFINITE);
 	currentTime = CTime::GetCurrentTime().Format("%H:%M:%S");
-	strResu.Format(_T("%s  消费者%d消费结束!"),currentTime,id);
+	strResu.Format(_T("%s  消费者%d消费结束!"), currentTime, id);
 	str = new CString(strResu);
 	::PostMessage(hWnd, UM_RESURECEDATA, (WPARAM)str, (LPARAM)str);
 	ReleaseMutex(disp);
 
+	WaitForSingleObject(buf2_Mutex, INFINITE); //请求互斥锁，阻塞
 	WaitForSingleObject(disp, INFINITE);
 	strResu = buf2;
+	WaitForSingleObject(buf2Idx_Mutex, INFINITE);
 	strResu.Left(buf2Idx);
+	ReleaseMutex(buf2Idx_Mutex);
 	str = new CString(strResu);
 	::PostMessage(hWnd, UM_BUFFINFO3, (WPARAM)str, (LPARAM)str);
 	ReleaseMutex(disp);
+	ReleaseMutex(buf2_Mutex);    //释放互斥锁
 
-	WaitForSingleObject(disp, INFINITE);
+	WaitForSingleObject(buf3_Mutex, INFINITE); //请求互斥锁，阻塞WaitForSingleObject(disp, INFINITE);
 	strResu = buf3;
+	WaitForSingleObject(buf3Idx_Mutex, INFINITE);
 	strResu.Left(buf3Idx);
+	ReleaseMutex(buf3Idx_Mutex);
 	str = new CString(strResu);
 	::PostMessage(hWnd, UM_BUFFINFO2, (WPARAM)str, (LPARAM)str);
 	ReleaseMutex(disp);
+	ReleaseMutex(buf3_Mutex);    //释放互斥锁	
 
-	WaitForSingleObject(FinishedHandle, INFINITE);
-	haveFinished++;
-	ReleaseMutex(FinishedHandle);
+	WaitForSingleObject(ConsumerFinishedMutex,INFINITE);
+	if (FinishedConsumerNum==producer_num)
+	{
+		TerminateThread(Move1Handle->m_hThread,NULL);
+		TerminateThread(Move2Handle->m_hThread, NULL);
+		HANDLE handle;
+		WaitForSingleObject(FinishedMoveMutex, INFINITE);
+		FinishedMoveNum = 2;
+		ReleaseMutex(FinishedMoveMutex);
+		WaitForSingleObject(ProduceFinishedMutex, INFINITE);
+		FinishedProduceNum = ProducerHandle.GetCount();
+		ReleaseMutex(ProduceFinishedMutex);
+		for (int i = 0; i < ProducerHandle.GetCount(); i++)
+		{
+			handle = ProducerHandle.GetAt(ProducerHandle.FindIndex(i))->m_hThread;
+			TerminateThread(handle, NULL);
+		}
+		WaitForSingleObject(disp, INFINITE);
+		strResu = buf2;
+		strResu.Left(buf2Idx);
+		str = new CString(strResu);
+		::PostMessage(hWnd, UM_BUFFINFO2, (WPARAM)str, (LPARAM)str);
+		ReleaseMutex(disp);
 
+		WaitForSingleObject(disp, INFINITE);
+		strResu = buf1;
+		strResu.Left(buf1Idx);
+		str = new CString(strResu);
+		::PostMessage((HWND)param, UM_BUFFINFO1, (WPARAM)str, (LPARAM)str);
+		ReleaseMutex(disp);
+
+
+		WaitForSingleObject(disp, INFINITE);
+		strResu = buf3;
+		strResu.Left(buf3Idx);
+		str = new CString(strResu);
+		::PostMessage(hWnd, UM_BUFFINFO3, (WPARAM)str, (LPARAM)str);
+		ReleaseMutex(disp);
+
+	}
+	ReleaseMutex(ConsumerFinishedMutex);
 	return 0;
 }
 
@@ -452,7 +563,6 @@ UINT Consumer(LPVOID param)
 UINT Move1(LPVOID param)
 {
 	CString strResu;
-	//CString* pstrResu;
 	int ct;
 	const int cwait = 300;
 	CString stuff;
@@ -467,7 +577,8 @@ UINT Move1(LPVOID param)
 	ReleaseMutex(disp);
 	char currentChar;
 	int maxGet;
-	if (putNum<getNum)
+	int iFinishedProc = 0;
+	if (putNum < getNum)
 	{
 		maxGet = putNum;
 	}
@@ -475,30 +586,50 @@ UINT Move1(LPVOID param)
 	{
 		maxGet = getNum;
 	}
-	while (getedNum<maxGet)
+	while (true)
 	{
-		if (isFinishProduce&&(buf1Idx==0))
+		WaitForSingleObject(ProduceFinishedMutex,INFINITE);
+		WaitForSingleObject(ConsumerFinishedMutex, INFINITE);
+		WaitForSingleObject(buf1Idx_Mutex, INFINITE);
+		if ((FinishedConsumerNum == consumer_num)||((FinishedProduceNum == producer_num) && (buf1Idx == 0)))
 		{
+			ReleaseMutex(buf1Idx_Mutex);
+			ReleaseMutex(ConsumerFinishedMutex);
+			ReleaseMutex(ProduceFinishedMutex);
 			break;
-		}
+		}	
+		ReleaseMutex(buf1Idx_Mutex);
+		ReleaseMutex(ConsumerFinishedMutex);
+		ReleaseMutex(ProduceFinishedMutex);
+
 		WaitForSingleObject(buf1_Full, INFINITE); //请求一个满缓冲区，阻塞		
 		WaitForSingleObject(buf1_Mutex, INFINITE); //请求互斥锁，阻塞
 		WaitForSingleObject(buf2_Empty, INFINITE);
 		WaitForSingleObject(buf2_Mutex, INFINITE);
+		WaitForSingleObject(buf1Idx_Mutex, INFINITE);
 		currentChar = buf1[--buf1Idx];
+		WaitForSingleObject(buf2Idx_Mutex, INFINITE);
 		buf2[buf2Idx++] = currentChar;
+		ReleaseMutex(buf2Idx_Mutex);
 
 		WaitForSingleObject(disp, INFINITE);
 		currentTime = CTime::GetCurrentTime().Format("%H:%M:%S");
-		strResu.Format(_T("%s  字符 %s 移动到Buffer2 序号Buffer1【%d】"), currentTime, CString(currentChar), (buf1Idx + 1));
+		WaitForSingleObject(buf1Idx_Mutex, INFINITE);
+		WaitForSingleObject(buf2Idx_Mutex, INFINITE);
+		strResu.Format(_T("%s  (B1->B2)字符 %s 从Buffer1[%d]移动到Buffer2[%d]"), currentTime, CString(currentChar), (buf1Idx + 1), (buf2Idx));
+		ReleaseMutex(buf2Idx_Mutex);
+		ReleaseMutex(buf1Idx_Mutex);
 		str = new CString(strResu);
 		::PostMessage((HWND)param, UM_RESURECEDATA, (WPARAM)str, (LPARAM)str);
 		ReleaseMutex(disp);
+		ReleaseMutex(buf1Idx_Mutex);
 
 		//发送已经生产的所有产品
 		WaitForSingleObject(disp, INFINITE);
 		strResu = buf1;
+		WaitForSingleObject(buf1Idx_Mutex, INFINITE);
 		strResu.Left(buf1Idx);
+		ReleaseMutex(buf1Idx_Mutex);
 		str = new CString(strResu);
 		::PostMessage((HWND)param, UM_BUFFINFO1, (WPARAM)str, (LPARAM)str);
 		ReleaseMutex(disp);
@@ -506,7 +637,9 @@ UINT Move1(LPVOID param)
 		//
 		WaitForSingleObject(disp, INFINITE);
 		strResu = buf2;
+		WaitForSingleObject(buf2Idx_Mutex, INFINITE);
 		strResu.Left(buf2Idx);
+		ReleaseMutex(buf2Idx_Mutex);
 		str = new CString(strResu);
 		::PostMessage((HWND)param, UM_BUFFINFO2, (WPARAM)str, (LPARAM)str);
 		ReleaseMutex(disp);
@@ -527,23 +660,32 @@ UINT Move1(LPVOID param)
 	ReleaseMutex(disp);
 
 	//发送已经生产的所有产品
+	WaitForSingleObject(buf1_Mutex, INFINITE); //请求互斥锁，阻塞
 	WaitForSingleObject(disp, INFINITE);
 	strResu = buf1;
+	WaitForSingleObject(buf1Idx_Mutex, INFINITE);
 	strResu.Left(buf1Idx);
+	ReleaseMutex(buf1Idx_Mutex);
 	str = new CString(strResu);
 	::PostMessage((HWND)param, UM_BUFFINFO1, (WPARAM)str, (LPARAM)str);
 	ReleaseMutex(disp);
+	ReleaseMutex(buf1_Mutex);    //释放互斥锁
 
+	WaitForSingleObject(buf2_Mutex, INFINITE); //请求互斥锁，阻塞
 	WaitForSingleObject(disp, INFINITE);
 	strResu = buf2;
+	WaitForSingleObject(buf2Idx_Mutex, INFINITE);
 	strResu.Left(buf2Idx);
+	ReleaseMutex(buf2Idx_Mutex);
 	str = new CString(strResu);
 	::PostMessage((HWND)param, UM_BUFFINFO2, (WPARAM)str, (LPARAM)str);
 	ReleaseMutex(disp);
+	ReleaseMutex(buf2_Mutex);    //释放互斥锁
+	
 
-	WaitForSingleObject(FinishedHandle, INFINITE);
-	haveFinished++;
-	ReleaseMutex(FinishedHandle);
+	WaitForSingleObject(FinishedMoveMutex, INFINITE);
+	FinishedMoveNum++;
+	ReleaseMutex(FinishedMoveMutex);
 
 	return 0;
 }
@@ -566,7 +708,8 @@ UINT Move2(LPVOID param)
 	ReleaseMutex(disp);
 	char currentChar;//从buffer1中获取的字符
 	int maxGet;
-	if (putNum<getNum)
+	int iFinishedProc = 0;
+	if (putNum < getNum)
 	{
 		maxGet = putNum;
 	}
@@ -574,38 +717,60 @@ UINT Move2(LPVOID param)
 	{
 		maxGet = getNum;
 	}
-	while (getedNum<maxGet)
+	while (true)
 	{
-		if (isFinishProduce && (buf1Idx == 0))
+		WaitForSingleObject(ProduceFinishedMutex, INFINITE);
+		WaitForSingleObject(ConsumerFinishedMutex, INFINITE);
+		WaitForSingleObject(buf1Idx_Mutex, INFINITE);
+		if ((FinishedConsumerNum == consumer_num) || ((FinishedProduceNum == producer_num) && (buf1Idx == 0)))
 		{
+			ReleaseMutex(buf1Idx_Mutex);
+			ReleaseMutex(ConsumerFinishedMutex);
+			ReleaseMutex(ProduceFinishedMutex);
 			break;
 		}
+		ReleaseMutex(buf1Idx_Mutex);
+		ReleaseMutex(ConsumerFinishedMutex);
+		ReleaseMutex(ProduceFinishedMutex);
+
 		WaitForSingleObject(buf1_Full, INFINITE); //请求一个满缓冲区，阻塞		
 		WaitForSingleObject(buf1_Mutex, INFINITE); //请求互斥锁，阻塞
 
 		WaitForSingleObject(buf3_Empty, INFINITE);
 		WaitForSingleObject(buf3_Mutex, INFINITE);
+		WaitForSingleObject(buf1Idx_Mutex, INFINITE);
 		currentChar = buf1[--buf1Idx];
-		buf2[buf3Idx++] = currentChar;
+		ReleaseMutex(buf1Idx_Mutex);
+		WaitForSingleObject(buf3Idx_Mutex, INFINITE);
+		buf3[buf3Idx++] = currentChar;
+		ReleaseMutex(buf3Idx_Mutex);
 
 		WaitForSingleObject(disp, INFINITE);
 		currentTime = CTime::GetCurrentTime().Format("%H:%M:%S");
-		strResu.Format(_T("%s  字符 %s 移动到Buffer3 序号Buffer1【%d】"), currentTime, CString(currentChar),(buf1Idx+1));
+		WaitForSingleObject(buf3Idx_Mutex, INFINITE);
+		WaitForSingleObject(buf1Idx_Mutex, INFINITE);
+		strResu.Format(_T("%s  (B1->B3)字符 %s 从Buffer1[%d]移动到Buffer3[%d]"), currentTime, CString(currentChar), (buf1Idx + 1), (buf3Idx));
+		ReleaseMutex(buf1Idx_Mutex);
+		ReleaseMutex(buf3Idx_Mutex);
 		str = new CString(strResu);
-		::PostMessage((HWND)param, UM_RESURECEDATA, (WPARAM)str, (LPARAM)str);		
+		::PostMessage((HWND)param, UM_RESURECEDATA, (WPARAM)str, (LPARAM)str);
 		ReleaseMutex(disp);
 
 		//发送已经生产的所有产品
 		WaitForSingleObject(disp, INFINITE);
 		strResu = buf1;
+		WaitForSingleObject(buf1Idx_Mutex, INFINITE);
 		strResu.Left(buf1Idx);
+		ReleaseMutex(buf1Idx_Mutex);
 		str = new CString(strResu);
 		::PostMessage((HWND)param, UM_BUFFINFO1, (WPARAM)str, (LPARAM)str);
 		ReleaseMutex(disp);
 
 		WaitForSingleObject(disp, INFINITE);
 		strResu = buf3;
+		WaitForSingleObject(buf3Idx_Mutex, INFINITE);
 		strResu.Left(buf3Idx);
+		ReleaseMutex(buf3Idx_Mutex);
 		str = new CString(strResu);
 		::PostMessage((HWND)param, UM_BUFFINFO3, (WPARAM)str, (LPARAM)str);
 		ReleaseMutex(disp);
@@ -628,21 +793,25 @@ UINT Move2(LPVOID param)
 	//发送已经生产的所有产品
 	WaitForSingleObject(disp, INFINITE);
 	strResu = buf1;
+	WaitForSingleObject(buf1Idx_Mutex, INFINITE);
 	strResu.Left(buf1Idx);
+	ReleaseMutex(buf1Idx_Mutex);
 	str = new CString(strResu);
 	::PostMessage((HWND)param, UM_BUFFINFO1, (WPARAM)str, (LPARAM)str);
 	ReleaseMutex(disp);
 
 	WaitForSingleObject(disp, INFINITE);
 	strResu = buf3;
+	WaitForSingleObject(buf3Idx_Mutex, INFINITE);
 	strResu.Left(buf3Idx);
+	ReleaseMutex(buf3Idx_Mutex);
 	str = new CString(strResu);
 	::PostMessage((HWND)param, UM_BUFFINFO3, (WPARAM)str, (LPARAM)str);
 	ReleaseMutex(disp);
 
-	WaitForSingleObject(FinishedHandle, INFINITE);
-	haveFinished++;
-	ReleaseMutex(FinishedHandle);
+	WaitForSingleObject(FinishedMoveMutex, INFINITE);
+	FinishedMoveNum++;
+	ReleaseMutex(FinishedMoveMutex);
 
 	return 0;
 }
@@ -653,27 +822,15 @@ UINT Move2(LPVOID param)
 LRESULT CproducerAndConsumerDlg::showNumberOfP(WPARAM Wparam, LPARAM Lparam)
 {
 	CString *str = (CString*)Lparam;
-	GetDlgItem(IDC_BUFIN_EDIT)->SetWindowText(*str);
+	GetDlgItem(IDC_PUTED_NUM_STATIC)->SetWindowText(*str);
 	return TRUE;
 }
 
 LRESULT CproducerAndConsumerDlg::showBuffer1Content(WPARAM Wparam, LPARAM Lparam)
 {
-	//int currentRow = 0;
-	//m_buff1List.ResetContent();
 	CString *str = (CString*)Lparam;
 	CString strResu = CString(*str);
 	GetDlgItem(IDC_BUF1_CONTENT_EDIT)->SetWindowText(strResu);
-	//m_buff1List.InsertString(currentRow, strResu);
-	/*CString strAdd;
-	int length = strResu.GetLength();
-	char content = NULL;
-	for (int i = 0; i < length; i++)
-	{
-		strAdd = strResu.Mid(i, i + 1);
-		m_buff1List.InsertString(currentRow, strAdd);
-		currentRow++;
-	}*/
 	return TRUE;
 }
 
@@ -696,7 +853,7 @@ LRESULT CproducerAndConsumerDlg::showBuffer3Content(WPARAM Wparam, LPARAM Lparam
 LRESULT CproducerAndConsumerDlg::showNumberOfC(WPARAM Wparam, LPARAM Lparam)
 {
 	CString *str = (CString*)Lparam;
-	GetDlgItem(IDC_BUFOUT_EDIT)->SetWindowText(*str);
+	GetDlgItem(IDC_GETED_NUM_STATIC)->SetWindowText(*str);
 	return TRUE;
 }
 
@@ -714,8 +871,10 @@ LRESULT CproducerAndConsumerDlg::OnResuReceData(WPARAM Wparam, LPARAM Lparam)
 /*
 初始化所有的全局变量
 */
+long timeStart;
 void CproducerAndConsumerDlg::initGlobalVariable()
 {
+	
 	CString str;
 	GetDlgItem(IDC_PUTNUM_EDIT)->GetWindowText(str);
 	putNum = _ttoi(str);
@@ -743,23 +902,38 @@ void CproducerAndConsumerDlg::initGlobalVariable()
 	buf1Idx = 0;    //当前缓冲区1下标
 	buf2Idx = 0;    //当前缓冲区2下标
 	buf3Idx = 0;
+	timeStart = GetTickCount();
+	FinishedMoveNum = 0;//用于记录Move线程完成的个数
+	FinishedProduceNum = 0;//生产完成个数
+	FinishedConsumerNum = 0;//消费者完成个数
+	buf1 = new char[buffer1_capacity];
+	buf2 = new char[buffer2_capacity];
+	buf3 = new char[buffer3_capacity];
+	memset(buf1, 0, sizeof(char)* buffer1_capacity);
+	memset(buf2, 0, sizeof(char)* buffer2_capacity);
+	memset(buf3, 0, sizeof(char)* buffer3_capacity);
 }
-long timeStart = GetTickCount();
+
+int startThreadNum;
 void CproducerAndConsumerDlg::OnBnClickedBtnStart()
 {
 	// TODO:  在此添加控件通知处理程序代码
-	m_LogList.ResetContent();		
+	GetDlgItem(IDC_BTN_PAUSE)->SetWindowText(_T("||"));
+	CButton* btn = (CButton*)GetDlgItem(IDC_BTN_PAUSE);
+	btn->EnableWindow(1);
+	m_LogList.ResetContent();
 	initGlobalVariable();
-	SetTimer(1,1,0);
+	
 	Situation();
-	int startThreadNum = 2;
+	SetTimer(1, 1, 0);
+	startThreadNum = 2;
 	CString str;
 	GetDlgItem(IDC_PROD_EDIT)->GetWindowText(str);
 	startThreadNum += _ttoi(str);
 	GetDlgItem(IDC_CONS_EDIT)->GetWindowText(str);
 	startThreadNum += _ttoi(str);
-	str.Format(_T("%d"),startThreadNum);
-	SetDlgItemText(IDC_THREADNUM_STATIC,str);
+	str.Format(_T("%d"), startThreadNum);
+	SetDlgItemText(IDC_THREADNUM_STATIC, str);
 }
 
 LRESULT CproducerAndConsumerDlg::WindowProc(UINT message, WPARAM wParam, LPARAM lParam)
@@ -767,7 +941,7 @@ LRESULT CproducerAndConsumerDlg::WindowProc(UINT message, WPARAM wParam, LPARAM 
 	// TODO:  在此添加专用代码和/或调用基类
 	if (message == UM_RESURECEDATA)
 	{
-		OnResuReceData(wParam,lParam);
+		OnResuReceData(wParam, lParam);
 	}
 	else if (message == UM_PUTEDNUM)
 	{
@@ -790,44 +964,50 @@ LRESULT CproducerAndConsumerDlg::WindowProc(UINT message, WPARAM wParam, LPARAM 
 		showBuffer3Content(wParam, lParam);
 	}
 
-	else 
+	else
 		return CDialogEx::WindowProc(message, wParam, lParam);
 }
 
 
-//线程句柄
-CWinThread* Move1Handle;
-CWinThread* Move2Handle;
-CList<CWinThread*> ProducerHandle;
-CList<CWinThread*> ConsumerHandle;
+
 // 第四种情况
 void CproducerAndConsumerDlg::Situation()
 {
-	//生产者线程与消费者线程的线程ID
-	DWORD ProducerID, ConsumerID, Move1ID, Move2ID;
-	
-	FinishedHandle = CreateMutex(NULL,FALSE,NULL);
+	Move1Handle = NULL;
+	Move2Handle = NULL;
+	ProducerHandle.RemoveAll();
+	ConsumerHandle.RemoveAll();
+
+	puted_Mutex = CreateMutex(NULL,FALSE,NULL);
+
+	geted_Mutex = CreateMutex(NULL, FALSE, NULL);
+
+	ProduceFinishedMutex = CreateMutex(NULL, FALSE, NULL);
+	FinishedMoveMutex = CreateMutex(NULL, FALSE, NULL);
+	ConsumerFinishedMutex = CreateMutex(NULL, FALSE, NULL);
 	//创建屏幕打印互斥锁
 	disp = CreateMutex(NULL, FALSE, NULL);
-
+	buf1Idx_Mutex = CreateMutex(NULL, FALSE, NULL);
+	buf2Idx_Mutex = CreateMutex(NULL, FALSE, NULL);
+	buf3Idx_Mutex = CreateMutex(NULL, FALSE, NULL);
 	//创建互斥锁
 	buf1_Mutex = CreateMutex(NULL, FALSE, NULL);
 	//创建缓冲区占用信号量
-	buf1_Full = CreateSemaphore(NULL, 0, maxsize, _T("full1"));
+	buf1_Full = CreateSemaphore(NULL, 0, buffer1_capacity, _T("full1"));
 	//创建缓冲区空闲信号量
-	buf1_Empty = CreateSemaphore(NULL, maxsize, maxsize, _T("empty1"));
+	buf1_Empty = CreateSemaphore(NULL, buffer1_capacity, buffer1_capacity, _T("empty1"));
 	//
 	buf2_Mutex = CreateMutex(NULL, FALSE, NULL);
 
-	buf2_Full = CreateSemaphore(NULL, 0, maxsize, _T("full2"));
+	buf2_Full = CreateSemaphore(NULL, 0, buffer2_capacity, _T("full2"));
 
-	buf2_Empty = CreateSemaphore(NULL, maxsize, maxsize, _T("empty2"));
+	buf2_Empty = CreateSemaphore(NULL, buffer2_capacity, buffer2_capacity, _T("empty2"));
 
 	buf3_Mutex = CreateMutex(NULL, FALSE, NULL);
 
-	buf3_Full = CreateSemaphore(NULL, 0, maxsize, _T("full3"));
+	buf3_Full = CreateSemaphore(NULL, 0, buffer3_capacity, _T("full3"));
 
-	buf3_Empty = CreateSemaphore(NULL, maxsize, maxsize, _T("empty3"));
+	buf3_Empty = CreateSemaphore(NULL, buffer3_capacity, buffer3_capacity, _T("empty3"));
 
 	for (int i = 1; i <= producer_num; i++)
 	{
@@ -838,7 +1018,7 @@ void CproducerAndConsumerDlg::Situation()
 		//创建生产者线程
 		ProducerHandle.AddTail(AfxBeginThread(Producer, (LPVOID)producerSpeed, 0, 0, 0, NULL));
 	}
-	
+
 	//move线程
 	Move1Handle = AfxBeginThread(Move1, (LPVOID)m_hWnd, 0, 0, 0, NULL);
 	Move2Handle = AfxBeginThread(Move2, (LPVOID)m_hWnd, 0, 0, 0, NULL);
@@ -851,7 +1031,7 @@ void CproducerAndConsumerDlg::Situation()
 		//创建消费者线程
 		ProducerHandle.AddTail(AfxBeginThread(Consumer, (LPVOID)consumerSpeed, 0, 0, 0, NULL));
 	}
-	SetTimer(2,10,NULL);
+	SetTimer(2, 10, NULL);
 
 	MSG msg;
 	while (::PeekMessageA(&msg, m_hWnd, WM_USER + 10, WM_USER + 10, PM_REMOVE))
@@ -862,108 +1042,83 @@ void CproducerAndConsumerDlg::Situation()
 			break;
 		}
 	}
-
-	//等待直到生产者线程执行完成
-	if (!ProducerHandle.IsEmpty())
-	{
-		HANDLE handle;
-		for (int i = 0; i < ProducerHandle.GetCount(); i++)
-		{
-			handle = ProducerHandle.GetAt(ProducerHandle.FindIndex(i));
-			WaitForSingleObject(handle, INFINITE);
-			TerminateThread(handle, NULL);
-		}
-		
-	}
-	//等待直到消费者线程执行完成
-	if (!ConsumerHandle.IsEmpty())
-	{
-		HANDLE handle;
-		
-		for (int i = 0; i < ConsumerHandle.GetCount(); i++)
-		{
-			handle = ConsumerHandle.GetAt(ConsumerHandle.FindIndex(i));
-			WaitForSingleObject(handle, INFINITE);
-			TerminateThread(handle, NULL);
-			//CloseHandle(handle);
-		}
-		TerminateThread(Move1Handle,NULL);
-		TerminateThread(Move2Handle,NULL);
-		
-	}
 }
 
-void CproducerAndConsumerDlg::showBufferContent()
-{
-	int i;
-	m_buff1List.ResetContent();
-	for (i = 0; i < buf1Idx; i++)
-	{
-		m_buff1List.InsertString(i, CString(buf1[i]));
-	}
-}
 bool pause = false;
 void CproducerAndConsumerDlg::OnBnClickedBtnPause()
 {
 	// TODO:  在此添加控件通知处理程序代码
 	if (!pause)
 	{
-		if (Move1Handle)
-		{
-			Move1Handle->SuspendThread();
-		}
-		if (Move2Handle)
-		{
-			Move2Handle->SuspendThread();
-		}
-		if (!ProducerHandle.IsEmpty())
-		{
-			CWinThread* handle;
-			for (int i = 0; i < ProducerHandle.GetCount(); i++)
+		try{
+			if (Move1Handle)
 			{
-				handle = ProducerHandle.GetAt(ProducerHandle.FindIndex(i));
-				handle->SuspendThread();
+				Move1Handle->SuspendThread();
+			}
+			if (Move2Handle)
+			{
+				Move2Handle->SuspendThread();
+			}
+			if (!ProducerHandle.IsEmpty())
+			{
+				CWinThread* handle;
+				for (int i = 0; i < ProducerHandle.GetCount(); i++)
+				{
+					handle = ProducerHandle.GetAt(ProducerHandle.FindIndex(i));
+					handle->SuspendThread();
+				}
+			}
+			if (!ConsumerHandle.IsEmpty())
+			{
+				CWinThread* handle;
+				for (int i = 0; i < ConsumerHandle.GetCount(); i++)
+				{
+					handle = ConsumerHandle.GetAt(ConsumerHandle.FindIndex(i));
+					handle->SuspendThread();
+				}
 			}
 		}
-		if (!ConsumerHandle.IsEmpty())
-		{
-			CWinThread* handle;
-			for (int i = 0; i < ConsumerHandle.GetCount(); i++)
-			{
-				handle = ConsumerHandle.GetAt(ConsumerHandle.FindIndex(i));
-				handle->SuspendThread();
-			}
-		}
+		catch (CException* e){
+				throw; // Do not delete e
+		}		
+		GetDlgItem(IDC_BTN_PAUSE)->SetWindowText(_T("|>"));
 		pause = true;
 	}
 	else
 	{
-		if (Move1Handle)
-		{
-			Move1Handle->ResumeThread();
-		}
-		if (Move2Handle)
-		{
-			Move2Handle->ResumeThread();
-		}
-		if (!ProducerHandle.IsEmpty())
-		{
-			CWinThread* handle;
-			for (int i = 0; i < ProducerHandle.GetCount(); i++)
+		try{
+			if (Move1Handle)
 			{
-				handle = ProducerHandle.GetAt(ProducerHandle.FindIndex(i));
-				handle->ResumeThread();
+				Move1Handle->ResumeThread();
+			}
+			if (Move2Handle)
+			{
+				Move2Handle->ResumeThread();
+			}
+			if (!ProducerHandle.IsEmpty())
+			{
+				CWinThread* handle;
+				for (int i = 0; i < ProducerHandle.GetCount(); i++)
+				{
+					handle = ProducerHandle.GetAt(ProducerHandle.FindIndex(i));
+					handle->ResumeThread();
+				}
+			}
+			if (!ConsumerHandle.IsEmpty())
+			{
+				CWinThread* handle;
+				for (int i = 0; i < ConsumerHandle.GetCount(); i++)
+				{
+					handle = ConsumerHandle.GetAt(ConsumerHandle.FindIndex(i));
+					handle->ResumeThread();
+				}
 			}
 		}
-		if (!ConsumerHandle.IsEmpty())
-		{
-			CWinThread* handle;
-			for (int i = 0; i < ConsumerHandle.GetCount(); i++)
-			{
-				handle = ConsumerHandle.GetAt(ConsumerHandle.FindIndex(i));
-				handle->ResumeThread();
-			}
+		catch (CException* e){
+			throw;
 		}
+		
+		GetDlgItem(IDC_BTN_PAUSE)->SetWindowText(_T("||"));
 		pause = false;
 	}
 }
@@ -979,18 +1134,36 @@ void CproducerAndConsumerDlg::OnTimer(UINT_PTR nIDEvent)
 	DWORD code;
 	CWinThread* handle;
 	GetDlgItem(IDC_RUN_NUM_STATIC)->GetWindowText(str);
-	if (str == "0")
+	if (str=="0"||(FinishedMoveNum + FinishedProduceNum + FinishedConsumerNum) == startThreadNum)
 	{
+		CString str=_T("");
+		for (int i = 0; i < buf1Idx; i++)
+		{
+			str += buf1[i];
+		}
+		GetDlgItem(IDC_BUF1_CONTENT_EDIT)->SetWindowText(str);
+		for (int i = 0; i < buf2Idx; i++)
+		{
+			str += buf2[i];
+		}
+		GetDlgItem(IDC_BUF2_CONTENT_EDIT)->SetWindowText(str);
+		for (int i = 0; i < buf3Idx; i++)
+		{
+			str += buf3[i];
+		}
+		GetDlgItem(IDC_BUF3_CONTENT_EDIT)->SetWindowText(str);
 		KillTimer(1);
 		KillTimer(2);
+		CButton* btn = (CButton*)GetDlgItem(IDC_BTN_PAUSE);
+		btn->EnableWindow(0);
 	}
 	switch (nIDEvent)
 	{
-	case 1:		
+	case 1:
 		timeEnd = GetTickCount();
 		timeUse = timeEnd - timeStart;
 		str.Format(_T("%d"), timeUse);
-		GetDlgItem(IDC_BUFTIME_EDIT)->SetWindowText(str);
+		GetDlgItem(IDC_USE_TIME_STATIC)->SetWindowText(str);
 		break;
 	case 2:
 		GetExitCodeThread(Move1Handle->m_hThread, &code);
@@ -1022,10 +1195,48 @@ void CproducerAndConsumerDlg::OnTimer(UINT_PTR nIDEvent)
 			}
 		}
 		str.Format(_T("%d"), numberOfRunThread);
-		SetDlgItemText(IDC_RUN_NUM_STATIC,str);
+		SetDlgItemText(IDC_RUN_NUM_STATIC, str);
 		break;
 	default:
 		CDialogEx::OnTimer(nIDEvent);
 		break;
-	}	
+	}
+}
+
+void CproducerAndConsumerDlg::OnBnClickedBtnLib()
+{
+	// TODO:  在此添加控件通知处理程序代码
+	libraryDlg dlg;
+	dlg.DoModal();
+}
+
+
+void CproducerAndConsumerDlg::OnBnClickedBtnSave()
+{
+	// TODO:  在此添加控件通知处理程序代码
+	// TODO:  在此添加控件通知处理程序代码
+	//创建文件
+	setlocale(LC_CTYPE, "chs");
+	m_LogList.GetDlgItem(IDC_LOG_LIST);
+	CStdioFile file;
+	if (file.Open(_T("my.txt"), CFile::modeNoTruncate | CFile::modeCreate | CFile::modeWrite))
+	{
+		CString str, str2;
+		int count = m_LogList.GetCount();
+		file.SeekToEnd();
+		for (int i = 0; i < count; i++)
+		{
+			m_LogList.GetText(i, str);
+			str2 += str + _T("\n");
+
+		}
+		str2 += _T("\n");
+		file.WriteString(str2);
+		file.Close();
+		str2.ReleaseBuffer();
+	}
+	else
+	{
+		MessageBox(_T("提示"), _T("文件写入失败！"), MB_OK);
+	}
 }
